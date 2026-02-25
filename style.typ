@@ -263,28 +263,212 @@
    marks.join()
 }
 
-#let template(doc, char-per-col: 16) = {
-  set page(paper: "a4", flipped: true, margin: (x: 2cm, y: 2cm))
+#let strip-heading-notes(text) = {
+   parse-segments(text)
+      .filter(seg => seg.type == "text")
+      .map(seg => seg.content)
+      .join("")
+}
+
+#let simulate-layout(blocks, char-per-col, cols-per-page) = {
+   let current-page = 0
+   let current-col = 0
+   let current-row = 0
+   let headings = ()
+   let seen-level1-heading = false
+
+   for blk in blocks {
+      if blk.kind == "heading" and blk.level == 1 {
+         if seen-level1-heading {
+            current-row = 0
+            current-col = 0
+            current-page += 1
+         }
+         headings.push((level: 1, title: blk.text, page: current-page))
+         seen-level1-heading = true
+      }
+
+      if blk.kind == "heading" and blk.level == 2 {
+         if current-row > 0 {
+            current-row = 0
+            if current-col + 1 < cols-per-page {
+               current-col += 1
+            } else {
+               current-col = 0
+               current-page += 1
+            }
+         }
+         if current-col + 1 < cols-per-page {
+            current-col += 1
+         } else {
+            current-col = 0
+            current-page += 1
+         }
+         headings.push((level: 2, title: blk.text, page: current-page))
+      }
+
+      if blk.kind == "heading" and blk.level == 3 {
+         if current-row > 0 {
+            current-row = 0
+            if current-col + 1 < cols-per-page {
+               current-col += 1
+            } else {
+               current-col = 0
+               current-page += 1
+            }
+         }
+         if current-col + 1 < cols-per-page {
+            current-col += 1
+         } else {
+            current-col = 0
+            current-page += 1
+         }
+         if char-per-col > 2 {
+            current-row = 2
+         } else if char-per-col > 1 {
+            current-row = 1
+         }
+         headings.push((level: 3, title: blk.text, page: current-page))
+      }
+
+      if blk.at("toc-indent", default: 0) > 0 {
+         let toc-indent = blk.at("toc-indent", default: 0)
+         if toc-indent < char-per-col {
+            current-row = toc-indent
+         } else {
+            current-row = char-per-col - 1
+         }
+      }
+
+      let segments = parse-segments(blk.text)
+      for segment in segments {
+         if segment.type == "text" {
+            for char in segment.content.clusters() {
+               if not is-punct(char) {
+                  current-row += 1
+                  if current-row >= char-per-col {
+                     current-row = 0
+                     current-col += 1
+                     if current-col >= cols-per-page {
+                        current-col = 0
+                        current-page += 1
+                     }
+                  }
+               }
+            }
+         } else {
+            let total-chars = 0
+            for c in segment.content.clusters() {
+               if not is-punct(c) {
+                  total-chars += 1
+               }
+            }
+
+            let grids-total = calc.ceil(total-chars / 4)
+            let grids-processed = 0
+
+            while grids-processed < grids-total {
+               if current-row >= char-per-col {
+                  current-row = 0
+                  current-col += 1
+                  if current-col >= cols-per-page {
+                     current-col = 0
+                     current-page += 1
+                  }
+               }
+
+               let rows-left = char-per-col - current-row
+               let grids-in-segment = calc.min(rows-left, grids-total - grids-processed)
+
+               grids-processed += grids-in-segment
+               current-row += grids-in-segment
+
+               if current-row >= char-per-col {
+                  current-row = 0
+                  current-col += 1
+                  if current-col >= cols-per-page {
+                     current-col = 0
+                     current-page += 1
+                  }
+               }
+            }
+         }
+      }
+
+      if current-row > 0 {
+         current-row = 0
+         if current-col + 1 < cols-per-page {
+            current-col += 1
+         } else {
+            current-col = 0
+            current-page += 1
+         }
+      }
+   }
+
+   (pages: current-page + 1, headings: headings)
+}
+
+#let template(doc, char-per-col: 18, cols-per-half-page: 10) = {
+   let page-width = 29.7cm
+    
+    
+  //  let raw-cols = calc.floor(page-width / cell-width)
+  //  let odd-cols = if calc.rem(raw-cols, 2) == 0 { raw-cols - 1 } else { raw-cols }
+   let cols-per-page = 2 * cols-per-half-page
+   let total-cols = cols-per-page + 1
+   let middle-col = calc.floor(total-cols / 2)
+
+  let x-margin = 3cm
+  let cell-width = (page-width - 2 * x-margin) / total-cols
+    let cell-height = cell-width / 1.3
+    let page-height = cell-height * char-per-col
+    let font-size = cell-height
+    let note-font-size = font-size * 0.5
+   let punct-font-size = font-size * 0.45
+
+  
+  set page(paper: "a4", flipped: true, margin: (x: -x-margin, top: 4cm), fill: rgb(236,231,184,40%), header-ascent: 0%, footer-descent: 0pt)
   set text(font: "KingHwa_OldSong", size: 16pt)
   
-   let blocks = extract-blocks(doc)
+   let content-blocks = extract-blocks(doc)
       .map(b => (..b, text: b.text.replace(regex("[ \n\t　]"), "")))
       .filter(b => b.text.len() > 0)
 
-   let page-width = 29.7cm - 4cm
-   let page-height = 21cm - 4cm
-    
-    let cell-height = page-height / char-per-col
-    let cell-width = cell-height 
-    let font-size = cell-height * 0.85
-    let note-font-size = font-size * 0.5
-   let punct-font-size = font-size * 0.45
-    
-   let raw-cols = calc.floor(page-width / cell-width)
-   let odd-cols = if calc.rem(raw-cols, 2) == 0 { raw-cols - 1 } else { raw-cols }
-   let total-cols = if odd-cols < 3 { 3 } else { odd-cols }
-   let middle-col = calc.floor(total-cols / 2)
-   let cols-per-page = total-cols - 1
+
+   let content-sim = simulate-layout(content-blocks, char-per-col, cols-per-page)
+   let toc-items = content-sim.headings.filter(h => h.level <= 3)
+
+   let build-toc-blocks = (page-offset: 0) => {
+      let toc = ((kind: "heading", level: 1, text: "目錄"),)
+      for item in toc-items {
+         let indent = if item.level == 1 { 0 } else if item.level == 2 { 1 } else { 2 }
+         let page-text = to-chinese-number(item.page + page-offset + 1)
+         let toc-title = strip-heading-notes(item.title)
+         toc.push((
+            kind: "toc",
+            level: 0,
+            text: toc-title + "{" + page-text + "}",
+            toc-indent: indent,
+         ))
+      }
+      toc
+   }
+
+   let toc-pages = 0
+   let toc-blocks = build-toc-blocks(page-offset: 0)
+   let iter = 0
+   while iter < 3 {
+      toc-pages = simulate-layout(toc-blocks, char-per-col, cols-per-page).pages
+      let next-toc = build-toc-blocks(page-offset: toc-pages)
+      if next-toc == toc-blocks {
+         break
+      }
+      toc-blocks = next-toc
+      iter += 1
+   }
+
+   let blocks = toc-blocks + content-blocks
 
    let logical-col-to-physical = logical-col => if logical-col < middle-col { logical-col } else { logical-col + 1 }
    let col-x = logical-col => page-width - (logical-col-to-physical(logical-col) + 1) * cell-width
@@ -324,7 +508,7 @@
           seen-level1-heading = true
        }
 
-       if blk.kind == "heading" and (blk.level == 2 or blk.level == 3) {
+       if blk.kind == "heading" and blk.level == 2 {
           if current-row > 0 {
              current-row = 0
              if current-col + 1 < cols-per-page {
@@ -341,6 +525,38 @@
              current-page += 1
           }
        }
+
+       if blk.kind == "heading" and blk.level == 3 {
+          if current-row > 0 {
+             current-row = 0
+             if current-col + 1 < cols-per-page {
+                current-col += 1
+             } else {
+                current-col = 0
+                current-page += 1
+             }
+          }
+          if current-col + 1 < cols-per-page {
+             current-col += 1
+          } else {
+             current-col = 0
+             current-page += 1
+          }
+          if char-per-col > 2 {
+             current-row = 2
+          } else if char-per-col > 1 {
+             current-row = 1
+          }
+       }
+
+      if blk.at("toc-indent", default: 0) > 0 {
+         let toc-indent = blk.at("toc-indent", default: 0)
+         if toc-indent < char-per-col {
+            current-row = toc-indent
+         } else {
+            current-row = char-per-col - 1
+         }
+      }
 
       let segments = parse-segments(blk.text)
        
@@ -592,19 +808,19 @@
 
        frame-lines.push(place(
           top + left, dx: frame-left, dy: 0pt,
-          line(start: (0pt, 0pt), end: (0pt, page-height), stroke: 1.6pt + red)
+          line(start: (0pt, 0pt), end: (0pt, page-height), stroke: 2pt + red)
        ))
        frame-lines.push(place(
           top + left, dx: frame-right, dy: 0pt,
-          line(start: (0pt, 0pt), end: (0pt, page-height), stroke: 1.6pt + red)
+          line(start: (0pt, 0pt), end: (0pt, page-height), stroke: 2pt + red)
        ))
        frame-lines.push(place(
           top + left, dx: frame-left, dy: 0pt,
-          line(start: (0pt, 0pt), end: (frame-right - frame-left, 0pt), stroke: 1.6pt + red)
+          line(start: (0pt, 0pt), end: (frame-right - frame-left, 0pt), stroke: 2pt + red)
        ))
        frame-lines.push(place(
           top + left, dx: frame-left, dy: page-height,
-          line(start: (0pt, 0pt), end: (frame-right - frame-left, 0pt), stroke: 1.6pt + red)
+          line(start: (0pt, 0pt), end: (frame-right - frame-left, 0pt), stroke: 2pt + red)
        ))
 
        let banxin = render-banxin(
