@@ -36,14 +36,14 @@
   let current-text = ""
   let in-note = false
 
-  for char in text.clusters() {
-    if char == "{" {
+   for char in text.clusters() {
+      if char == "【" {
       if current-text != "" {
         segments.push((type: if in-note { "note" } else { "text" }, content: current-text))
         current-text = ""
       }
       in-note = true
-    } else if char == "}" {
+   } else if char == "】" {
       if current-text != "" {
         segments.push((type: if in-note { "note" } else { "text" }, content: current-text))
         current-text = ""
@@ -114,7 +114,7 @@
 
 #let render-banxin(
    page-idx,
-   level1-page-map,
+   banxin-title-map,
    page-width,
    middle-col,
    cell-width,
@@ -122,6 +122,7 @@
    char-per-col,
    font-size,
    note-font-size,
+   v-shift: 2pt,
 ) = {
    let marks = ()
 
@@ -168,17 +169,17 @@
       mark-idx += 1
    }
 
-   // 一級標題：中間空列自正數第4格起（正文字號）
-   let page-level1-title = ""
-   for item in level1-page-map {
+   // 版心標題：優先二級（去夾註），缺省回退一級（去夾註）
+   let page-level-title = ""
+   for item in banxin-title-map {
       if page-idx >= item.start {
-         page-level1-title = item.title
+         page-level-title = item.title
       }
    }
 
    let title-start-row = 4
    let title-end-row = mark-row
-   let title-chars = page-level1-title.clusters()
+   let title-chars = page-level-title.clusters()
    let title-idx = 0
    for title-row in range(title-start-row, title-end-row) {
       if title-idx >= title-chars.len() {
@@ -199,8 +200,8 @@
    }
 
    // 版心美化：魚尾與中縫
-   let seam-stroke = 2pt + red
-   let fish-stroke = 1.0pt + red
+   let seam-stroke = 2pt
+   let fish-stroke = 1.0pt
    let center-x = mark-x + cell-width / 2
    let fish-left = mark-x + cell-width * 0.2
    let fish-right = mark-x + cell-width * 0.8
@@ -214,8 +215,7 @@
     dx: 0pt,
     dy: 0pt,
    polygon(
-    fill: red,
-    stroke: red,
+    fill: black,
     (mark-x,upper-top-y),
     (mark-x + cell-width,upper-top-y),
     (mark-x + cell-width,upper-bottom-y),
@@ -230,7 +230,7 @@
       top + left,
       dx: center-x,
       dy: 0pt,
-      line(start: (0pt, 0pt), end: (0pt, upper-top-y), stroke: seam-stroke)
+      line(start: (0pt, -v-shift), end: (0pt, upper-top-y), stroke: seam-stroke)
    ))
 
    // 下魚尾（開口向上）
@@ -242,8 +242,7 @@
     dx: 0pt,
     dy: 0pt,
     polygon(
-      fill: red,
-      stroke: red,
+      fill: black,
       (mark-x,upper-top-y),
       (mark-x + cell-width,upper-top-y),
       (mark-x + cell-width,upper-bottom-y),
@@ -257,7 +256,7 @@
       top + left,
       dx: center-x,
       dy: 0pt,
-      line(start: (0pt, cell-height*char-per-col), end: (0pt, upper-top-y), stroke: seam-stroke)
+      line(start: (0pt, cell-height*char-per-col + v-shift), end: (0pt, upper-top-y), stroke: seam-stroke)
    ))
 
    marks.join()
@@ -409,7 +408,7 @@
    (pages: current-page + 1, headings: headings)
 }
 
-#let template(doc, char-per-col: 18, cols-per-half-page: 10) = {
+#let template(doc, char-per-col: 20, cols-per-half-page: 10) = {
    let page-width = 29.7cm
     
     
@@ -421,7 +420,7 @@
 
   let x-margin = 3cm
   let cell-width = (page-width - 2 * x-margin) / total-cols
-    let cell-height = cell-width / 1.3
+    let cell-height = cell-width / 1.5
     let page-height = cell-height * char-per-col
     let font-size = cell-height
     let note-font-size = font-size * 0.5
@@ -430,6 +429,7 @@
   
   set page(paper: "a4", flipped: true, margin: (x: -x-margin, top: 4cm), fill: rgb(236,231,184,40%), header-ascent: 0%, footer-descent: 0pt)
   set text(font: "KingHwa_OldSong", size: 16pt)
+  // set text(font: "STFangsong", size: 16pt)
   
    let content-blocks = extract-blocks(doc)
       .map(b => (..b, text: b.text.replace(regex("[ \n\t　]"), "")))
@@ -448,7 +448,7 @@
          toc.push((
             kind: "toc",
             level: 0,
-            text: toc-title + "{" + page-text + "}",
+            text: toc-title + "【" + page-text + "】",
             toc-indent: indent,
          ))
       }
@@ -485,7 +485,7 @@
    let last-anchor-h = cell-height
     
     let pages-content = ((),)
-   let level1-page-map = ()
+   let banxin-title-map = ()
 
     // Helper to advance position
     let advance-pos = (n: 1) => {
@@ -496,7 +496,7 @@
     
     // We'll manage state manually in the loop.
     
-    let seen-level1-heading = false
+   let seen-level1-heading = false
     for blk in blocks {
        if blk.kind == "heading" and blk.level == 1 {
           if seen-level1-heading {
@@ -504,7 +504,8 @@
              current-col = 0
              current-page += 1
           }
-          level1-page-map.push((start: current-page, title: blk.text))
+          let start-page = if current-col < cols-per-half-page { current-page } else { current-page + 1 }
+          banxin-title-map.push((start: start-page, title: strip-heading-notes(blk.text), level: 1))
           seen-level1-heading = true
        }
 
@@ -524,6 +525,8 @@
              current-col = 0
              current-page += 1
           }
+          let start-page = if current-col < cols-per-half-page { current-page } else { current-page + 1 }
+          banxin-title-map.push((start: start-page, title: strip-heading-notes(blk.text), level: 2))
        }
 
        if blk.kind == "heading" and blk.level == 3 {
@@ -797,35 +800,24 @@
       let frame-offset = 5pt
        let frame-left = grid-left - frame-offset
        let frame-right = grid-right + frame-offset
+       let v-shift = 2pt
 
        for col-idx in range(total-cols + 1) {
           let x-pos = page-width - (col-idx) * cell-width
           grid-lines.push(place(
              top + left, dx: x-pos, dy: 0pt,
-             line(start: (0pt, 0pt), end: (0pt, page-height), stroke: 0.5pt + red)
+             line(start: (0pt, -v-shift), end: (0pt, page-height + v-shift), stroke: 0.5pt )
           ))
        }
 
        frame-lines.push(place(
           top + left, dx: frame-left, dy: 0pt,
-          line(start: (0pt, 0pt), end: (0pt, page-height), stroke: 2pt + red)
-       ))
-       frame-lines.push(place(
-          top + left, dx: frame-right, dy: 0pt,
-          line(start: (0pt, 0pt), end: (0pt, page-height), stroke: 2pt + red)
-       ))
-       frame-lines.push(place(
-          top + left, dx: frame-left, dy: 0pt,
-          line(start: (0pt, 0pt), end: (frame-right - frame-left, 0pt), stroke: 2pt + red)
-       ))
-       frame-lines.push(place(
-          top + left, dx: frame-left, dy: page-height,
-          line(start: (0pt, 0pt), end: (frame-right - frame-left, 0pt), stroke: 2pt + red)
+          polygon((0pt, -v-shift), (frame-right - frame-left, -v-shift), (frame-right - frame-left, page-height + v-shift), (0pt, page-height + v-shift), stroke: 2pt)
        ))
 
        let banxin = render-banxin(
           page-idx,
-          level1-page-map,
+          banxin-title-map,
           page-width,
           middle-col,
           cell-width,
