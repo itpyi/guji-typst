@@ -14,6 +14,7 @@
 - `main.typ`：示例正文
 - `style.typ`：排版模板與核心邏輯
 - `TODO.md`：需求與完成記錄
+- `TEMPLATE_FLOW.md`：模板運行機制說明（面向人類閱讀）
 
 ## 使用方式
 
