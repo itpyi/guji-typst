@@ -62,6 +62,9 @@
   segments
 }
 
+// 內部占位符：佔一字格但不渲染字形（U+2060 Word Joiner，僅供模板內部使用）。
+#let grid-space-marker = "\u{2060}"
+
 // 判斷字符是否為不佔格標點。
 #let is-punct(char) = {
    (
@@ -259,16 +262,15 @@
    marks.join()
 }
 
-// 去除標題中的夾註，只保留正文字符。
+// 去除標題中的夾註與空格佔位符，只保留正文字符。
 #let strip-heading-notes(text) = {
    parse-segments(text)
       .filter(seg => seg.type == "text")
-      .map(seg => seg.content)
+      .map(seg => seg.content.replace(grid-space-marker, ""))
       .join("")
 }
 
-// 計算夾註首小列（先填列）字數：優先豎直撐滿大格子。
-// 對 4k-3 / 4k-2（等價於 mod 4 為 1 / 2）時，首列會取滿 2k（k 為本段占格數）。
+// 計算夾註首小列（先填列）字數。
 #let note-first-column-count(chars-count, grids-used) = {
    calc.min(chars-count, 2 * grids-used)
 }
@@ -317,26 +319,6 @@
    move-to-next-col(state.page, state.col, cols-per-page)
 }
 
-// 計算三級標題起始行（前空兩格，受行高上限約束）。
-#let heading3-start-row(char-per-col) = {
-   if char-per-col > 2 {
-      2
-   } else if char-per-col > 1 {
-      1
-   } else {
-      0
-   }
-   }
-
-// 應用目錄條目的縮進行位，並限制在有效範圍。
-#let apply-toc-indent(toc-indent, char-per-col) = {
-   if toc-indent < char-per-col {
-      toc-indent
-   } else {
-      char-per-col - 1
-   }
-}
-
 // 區塊結束時收束到下一列起始行。
 #let flush-block-end(page, col, row, cols-per-page) = {
    if row > 0 {
@@ -382,18 +364,18 @@
    )
 }
 
-// 由標題列表構造目錄塊序列。
+// 由標題列表構造目錄塊序列（縮進以空格佔位符嵌入文本）。
 #let build-toc-blocks(toc-items, page-offset: 0) = {
    let toc = ((kind: "heading", level: 1, text: "目錄"),)
    for item in toc-items {
       let indent = if item.level == 1 { 0 } else if item.level == 2 { 1 } else { 2 }
       let page-text = to-chinese-number(item.page + 1)
       let toc-title = strip-heading-notes(item.title)
+      let prefix = range(indent).fold("", (s, _) => s + grid-space-marker)
       toc.push((
          kind: "toc",
          level: 0,
-         text: toc-title + "【" + page-text + "】",
-         toc-indent: indent,
+         text: prefix + toc-title + "【" + page-text + "】",
       ))
    }
    toc
@@ -458,13 +440,8 @@
          let state = reserve-heading-column(current-page, current-col, current-row, cols-per-page)
          current-page = state.page
          current-col = state.col
-         current-row = heading3-start-row(char-per-col)
+         current-row = state.row
          headings.push((level: 3, title: blk.text, page: current-page))
-      }
-
-      if blk.at("toc-indent", default: 0) > 0 {
-         let toc-indent = blk.at("toc-indent", default: 0)
-         current-row = apply-toc-indent(toc-indent, char-per-col)
       }
 
       let segments = parse-segments(blk.text)
@@ -579,12 +556,7 @@
       let state = reserve-heading-column(page, col, row, cols-per-page)
       page = state.page
       col = state.col
-      row = heading3-start-row(char-per-col)
-   }
-
-   if blk.at("toc-indent", default: 0) > 0 {
-      let toc-indent = blk.at("toc-indent", default: 0)
-      row = apply-toc-indent(toc-indent, char-per-col)
+      row = state.row
    }
 
    (
@@ -617,6 +589,7 @@
    last-anchor-y,
    last-anchor-w,
    last-anchor-h,
+   show-punct: true,
 ) = {
    let page = current-page
    let col = current-col
@@ -633,7 +606,7 @@
       if segment.type == "text" {
          for char in segment.content.clusters() {
             if is-punct(char) {
-               if has-anchor {
+               if show-punct and has-anchor {
                   content = place-anchor-punct(
                      content,
                      (page: anchor-page, x: anchor-x, y: anchor-y, w: anchor-w, h: anchor-h),
@@ -641,6 +614,11 @@
                      char,
                   )
                }
+            } else if char == grid-space-marker {
+               let state = advance-row(page, col, row, char-per-col, cols-per-page)
+               page = state.page
+               col = state.col
+               row = state.row
             } else {
                let x-pos = col-x(col)
                let y-pos = row * cell-height
@@ -786,7 +764,7 @@
                p-anchor-h = pre-note-anchor-h
             }
 
-            if has-p-anchor {
+            if show-punct and has-p-anchor {
                content = place-anchor-punct(
                   content,
                   (page: p-anchor-page, x: p-anchor-x, y: p-anchor-y, w: p-anchor-w, h: p-anchor-h),
@@ -854,6 +832,7 @@
    font-size,
    note-font-size,
    punct-font-size,
+   show-punct: true,
 ) = {
    let current-page = 0
    let current-col = 0
@@ -909,6 +888,7 @@
          last-anchor-y,
          last-anchor-w,
          last-anchor-h,
+         show-punct: show-punct,
       )
       current-page = segment-state.current-page
       current-col = segment-state.current-col
@@ -969,7 +949,7 @@
 }
 
 // 文檔模板入口：完成抽取、模擬、排版與輸出。
-#let template(doc, char-per-col: 20, cols-per-half-page: 10) = {
+#let template(doc, char-per-col: 20, cols-per-half-page: 10, show-punct: true) = {
    let layout = build-page-layout(char-per-col, cols-per-half-page)
    let page-width = layout.page-width
    let cols-per-page = layout.cols-per-page
@@ -991,6 +971,10 @@
    let content-blocks = extract-blocks(doc)
       .map(b => (..b, text: b.text.replace(regex("[ \n\t　]"), "")))
       .filter(b => b.text.len() > 0)
+      .map(b => if b.kind == "heading" and b.level == 3 {
+         // 三級標題前空兩格：以空格佔位符嵌入文本，由排版循環統一處理
+         (..b, text: grid-space-marker + grid-space-marker + b.text)
+      } else { b })
 
 
    let content-sim = simulate-layout(content-blocks, char-per-col, cols-per-page)
@@ -1016,6 +1000,7 @@
       font-size,
       note-font-size,
       punct-font-size,
+      show-punct: show-punct,
    )
 
    let pages-content = layout-result.pages-content
